@@ -27,6 +27,12 @@ module OAuth2
       # @note that you must also provide a :redirect_uri with most OAuth 2.0 providers
       def get_token(code, params = {}, opts = {})
         params = {'grant_type' => 'authorization_code', 'code' => code}.merge(@client.redirection_params).merge(params)
+
+        # Openbay - Allow params to be mutated prior to retrieving token
+        if block_given?
+          yield params
+        end
+
         params.keys.each do |key|
           params[key.to_s] = params.delete(key) if key.is_a?(Symbol)
         end
