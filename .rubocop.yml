@@ -20,6 +20,9 @@ Lint/UnusedBlockArgument:
 Style/AccessModifierIndentation:
   EnforcedStyle: outdent
 
+Style/ClassVars:
+  Enabled: false
+
 Style/CollectionMethods:
   PreferredMethods:
     map:      'collect'
@@ -39,6 +42,9 @@ Style/DoubleNegation:
 Style/EachWithObject:
   Enabled: false
 
+Style/EmptyMethod:
+  EnforcedStyle: expanded
+
 Style/Encoding:
   Enabled: false
 
@@ -51,5 +57,8 @@ Style/Lambda:
 Style/SpaceInsideHashLiteralBraces:
   EnforcedStyle: no_space
 
-Style/TrailingComma:
+Style/TrailingCommaInLiteral:
   EnforcedStyleForMultiline: 'comma'
+
+Metrics/BlockLength:
+  Enabled: false

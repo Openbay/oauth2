@@ -3,7 +3,7 @@ require 'logger'
 
 module OAuth2
   # The OAuth2::Client class
-  class Client
+  class Client # rubocop:disable Metrics/ClassLength
     attr_reader :id, :secret, :site
     attr_accessor :options
     attr_writer :connection
@@ -16,9 +16,11 @@ module OAuth2
     # @param [String] client_secret the client_secret value
     # @param [Hash] opts the options to create the client with
     # @option opts [String] :site the OAuth2 provider site host
+    # @option opts [String] :redirect_uri the absolute URI to the Redirection Endpoint for use in authorization grants and token exchange
     # @option opts [String] :authorize_url ('/oauth/authorize') absolute or relative URL path to the Authorization endpoint
     # @option opts [String] :token_url ('/oauth/token') absolute or relative URL path to the Token endpoint
     # @option opts [Symbol] :token_method (:post) HTTP method to use to request token (:get or :post)
+    # @option opts [Symbol] :auth_scheme (:basic_auth) HTTP method to use to authorize request (:basic_auth or :request_body)
     # @option opts [Hash] :connection_opts ({}) Hash of connection options to pass to initialize Faraday with
     # @option opts [FixNum] :max_redirects (5) maximum number of redirects to follow
     # @option opts [Boolean] :raise_errors (true) whether or not to raise an OAuth2::Error
@@ -33,6 +35,7 @@ module OAuth2
       @options = {:authorize_url    => '/oauth/authorize',
                   :token_url        => '/oauth/token',
                   :token_method     => :post,
+                  :auth_scheme      => :request_body,
                   :connection_opts  => {},
                   :connection_build => block,
                   :max_redirects    => 5,
@@ -52,9 +55,11 @@ module OAuth2
     def connection
       @connection ||= begin
         conn = Faraday.new(site, options[:connection_opts])
-        conn.build do |b|
-          options[:connection_build].call(b)
-        end if options[:connection_build]
+        if options[:connection_build]
+          conn.build do |b|
+            options[:connection_build].call(b)
+          end
+        end
         conn
       end
     end
@@ -62,7 +67,8 @@ module OAuth2
     # The authorize endpoint URL of the OAuth2 provider
     #
     # @param [Hash] params additional query parameters
-    def authorize_url(params = nil)
+    def authorize_url(params = {})
+      params = (params || {}).merge(redirection_params)
       connection.build_url(options[:authorize_url], params).to_s
     end
 
@@ -85,7 +91,7 @@ module OAuth2
     #   code response for this request.  Will default to client option
     # @option opts [Symbol] :parse @see Response::initialize
     # @yield [req] The Faraday request
-    def request(verb, url, opts = {}) # rubocop:disable CyclomaticComplexity, MethodLength
+    def request(verb, url, opts = {}) # rubocop:disable CyclomaticComplexity, MethodLength, Metrics/AbcSize
       connection.response :logger, ::Logger.new($stdout) if ENV['OAUTH_DEBUG'] == 'true'
 
       url = connection.build_url(url, opts[:params]).to_s
@@ -110,12 +116,12 @@ module OAuth2
         response
       when 400..599
         error = Error.new(response)
-        fail(error) if opts.fetch(:raise_errors, options[:raise_errors])
+        raise(error) if opts.fetch(:raise_errors, options[:raise_errors])
         response.error = error
         response
       else
         error = Error.new(response)
-        fail(error, "Unhandled status code value of #{response.status}")
+        raise(error, "Unhandled status code value of #{response.status}")
       end
     end
 
@@ -125,19 +131,23 @@ module OAuth2
     # @param [Hash] access token options, to pass to the AccessToken object
     # @param [Class] class of access token for easier subclassing OAuth2::AccessToken
     # @return [AccessToken] the initalized AccessToken
-    def get_token(params, access_token_opts = {}, access_token_class = AccessToken)
+    def get_token(params, access_token_opts = {}, access_token_class = AccessToken) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+      params = Authenticator.new(id, secret, options[:auth_scheme]).apply(params)
       opts = {:raise_errors => options[:raise_errors], :parse => params.delete(:parse)}
+      headers = params.delete(:headers) || {}
       if options[:token_method] == :post
-        headers = params.delete(:headers)
         opts[:body] = params
-        opts[:headers] =  {'Content-Type' => 'application/x-www-form-urlencoded'}
-        opts[:headers].merge!(headers) if headers
+        opts[:headers] = {'Content-Type' => 'application/x-www-form-urlencoded'}
       else
         opts[:params] = params
+        opts[:headers] = {}
       end
+      opts[:headers].merge!(headers)
       response = request(options[:token_method], token_url, opts)
-      error = Error.new(response)
-      fail(error) if options[:raise_errors] && !(response.parsed.is_a?(Hash) && response.parsed['access_token'])
+      if options[:raise_errors] && !(response.parsed.is_a?(Hash) && response.parsed['access_token'])
+        error = Error.new(response)
+        raise(error)
+      end
       access_token_class.from_hash(self, response.parsed.merge(access_token_opts))
     end
 
@@ -171,6 +181,30 @@ module OAuth2
 
     def assertion
       @assertion ||= OAuth2::Strategy::Assertion.new(self)
+    end
+
+    # The redirect_uri parameters, if configured
+    #
+    # The redirect_uri query parameter is OPTIONAL (though encouraged) when
+    # requesting authorization. If it is provided at authorization time it MUST
+    # also be provided with the token exchange request.
+    #
+    # Providing the :redirect_uri to the OAuth2::Client instantiation will take
+    # care of managing this.
+    #
+    # @api semipublic
+    #
+    # @see https://tools.ietf.org/html/rfc6749#section-4.1
+    # @see https://tools.ietf.org/html/rfc6749#section-4.1.3
+    # @see https://tools.ietf.org/html/rfc6749#section-4.2.1
+    # @see https://tools.ietf.org/html/rfc6749#section-10.6
+    # @return [Hash] the params to add to a request or URL
+    def redirection_params
+      if options[:redirect_uri]
+        {'redirect_uri' => options[:redirect_uri]}
+      else
+        {}
+      end
     end
   end
 end
